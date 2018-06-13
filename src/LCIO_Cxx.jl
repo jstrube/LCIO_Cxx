@@ -13,6 +13,7 @@ cxx"""
 #include "lcio.h"
 #include "IO/LCReader.h"
 #include "IOIMPL/LCFactory.h"
+#include "UTIL/CellIDDecoder.h"
 #include "EVENT/LCEvent.h"
 #include "EVENT/LCCollection.h"
 #include "EVENT/MCParticle.h"
@@ -20,6 +21,7 @@ cxx"""
 #include "EVENT/TrackerHit.h"
 #include "EVENT/SimTrackerHit.h"
 #include "EVENT/Track.h"
+#include "EVENT/TrackerRawData.h"
 #include "EVENT/ReconstructedParticle.h"
 #include "EVENT/Vertex.h"
 #include "EVENT/LCRelation.h"
@@ -34,30 +36,6 @@ function __init__()
         atexit() do
                 icxx"delete $(reader);"
         end
-end
-
-immutable Vec
-        x::Cdouble
-        y::Cdouble
-        z::Cdouble
-        t::Cdouble
-end
-
-+(a::Vec, b::Vec) = Vec(a.x+b.x, a.y+b.y, a.z+b.z, a.t+b.t)
-
-immutable ThreeVec
-        x::Cdouble
-        y::Cdouble
-        z::Cdouble
-end
-
-+(a::ThreeVec, b::ThreeVec) = ThreeVec(a.x+b.x, a.y+b.y, a.z+b.z)
-
-immutable CalHit
-        x::Cfloat
-        y::Cfloat
-        z::Cfloat
-        E::Cfloat
 end
 
 const VectorStringP = cxxt"const std::vector<std::string>*"
@@ -84,166 +62,6 @@ function done(it::EventIterator,state)
 end
 length(it::EventIterator) = icxx"$(reader)->getNumberOfEvents();"
 
-# open file with reader, returns iterator
-function open(f::Function, fn::AbstractString)
-        icxx"""$(reader)->open($(fn));"""
-        try
-            f(EventIterator( icxx"(EVENT::LCEvent*)NULL;" ))
-        finally
-            icxx"""$(reader)->close();"""
-        end
-        # returns an iterator, initialized with a nullptr
-        # the iterator knows about the global reader object
-end
-
-# We would like to have a typed collection, but what getCollection returns is unfortunately untyped
-# The type is established by reading its name from the collection and mapping it in the LCIOTypemap
-immutable LCCollection{T}
-        coll::cxxt"EVENT::LCCollection*"
-end
-
-const SimCalorimeterHit = cxxt"EVENT::SimCalorimeterHit*"
-const TrackerHit = cxxt"EVENT::TrackerHit*"
-const SimTrackerHit = cxxt"EVENT::SimTrackerHit*"
-const MCParticle = cxxt"EVENT::MCParticle*"
-const Track = cxxt"EVENT::Track*"
-const LCGenericObject = cxxt"EVENT::LCGenericObject*"
-const ReconstructedParticle = cxxt"EVENT::ReconstructedParticle*"
-
-# map from names stored in collection to actual types
-LCIOTypemap = Dict(
-        "SimCalorimeterHit" => SimCalorimeterHit,
-        "TrackerHit" => TrackerHit,
-        "SimTrackerHit" => SimTrackerHit,
-        "MCParticle" => MCParticle,
-        "Track" => Track,
-        "LCGenericObject" => LCGenericObject,
-        "ReconstructedParticle" => ReconstructedParticle
-)
-
-start(it::LCCollection) = 0
-done(it::LCCollection, i) = i >= length(it)
-next{T}(it::LCCollection{T}, i) = icxx"static_cast<$(T)>($(it.coll)->getElementAt($(i)));", i+1
-length(it::LCCollection) = icxx"$(it.coll)->getNumberOfElements();"
-
-function getCollection(event, collectionName)
-    collection = icxx"""$(event)->getCollection($(pointer(collectionName)));"""
-    collectionType = icxx"$(collection)->getTypeName();"
-    return LCCollection{LCIOTypemap[String(collectionType)]}(collection)
-end
-
-getCollectionTypeName(collection::LCCollection) = String( icxx"$(collection.coll)->getTypeName().c_str();" )
-getCollectionNames(event) = icxx"$(event)->getCollectionNames();"
-
-getEnergy(particle) = icxx"$(particle)->getEnergy();"
-function getMomentum(particle)
-        p3 = icxx"$(particle)->getMomentum();"
-        SVector{3, Float64}(unsafe_load(p3, 1), unsafe_load(p3, 2), unsafe_load(p3, 3))
-end
-function getPosition(hit)
-        pos = icxx"$(hit)->getPosition();"
-        SVector{3, Float64}(unsafe_load(pos, 1), unsafe_load(pos, 2), unsafe_load(pos, 3))
-end
-
-function getP4(particle)
-        p3 = icxx"$(particle)->getMomentum();"
-        e = icxx"$(particle)->getEnergy();"
-        SVector{4, Float64}(unsafe_load(p3, 1), unsafe_load(p3, 2), unsafe_load(p3, 3), e)
-end
-
-getType(particle) = icxx"$(particle)->getType();"
-
-
-include("MCParticle.jl")
-include("CaloHit.jl")
-export CalHit, getP4, getPosition, CellIDDecoder,
-    getEventNumber, getRunNumber, getDetectorName, getCollection, getCollectionNames, # LCEvent
-    getType
-#    getTypeName, # LCCollection
-#    getEnergy, getParents, getDaughters, getPDG, getGeneratorStatus, getSimulatorStatus, isCreatedInSimulation, isBackScatter, vertexIsNotEndpointOfParent, #isDecayedInCalorimeter, hasLeftDetector, isStopped, isOverlay, getVertex, getTime, getEndpoint, getMomentum, getMomentumAtEndpoint, getMass, getCharge, # MCParticle
-#    getCalorimeterHits, # Cluster
-#    getClusters, getType, isCompound, getMass, getCharge, getReferencePoint, getParticleIDs, getParticleIDUsed, getGoodnessOfPID, getParticles, getClusters, getTracks, #getStartVertex, getEndVertex # ReconstructedParticle
-
-#immutable CalHit
-#       x::Cfloat
-#       y::Cfloat
-#       z::Cfloat
-#       E::Cfloat
-#end
-
-#const MCPARTICLE = "MCParticle"
-#const WRITE_NEW = 0
-#const WRITE_APPEND = 1
-
-# iteration over std vectors
-#const StdVecs = Union{ClusterVec, CalorimeterHitVec, TrackVec, StringVec, MCParticleVec}
-
-# uses Julia counting, 1..n
-#start(it::StdVecs) = convert(UInt64, 1)
-#next(it::StdVecs, i) = (it[i], i+1)
-#done(it::StdVecs, i) = i > length(it)
-#length(it::StdVecs) = size(it)
-# 'at' uses C counting, 0..n-1
-#getindex(it::StdVecs, i) = at(it, i-1)
-
-#start(it::LCReader) = getNumberOfEvents(it)
-#next(it::LCReader, state) = readNextEvent(it), state-1
-#done(it::LCReader, state) = state < 1
-#length(it::LCReader) = getNumberOfEvents(it)
-
-#function iterate(f::Function, fn::AbstractString)
-#    reader = createLCReader()
-#    openFile(reader, fn)
-#    try
-#        for event in reader
-#            f(event)
-#        end
-#    finally
-#        closeFile(reader)
-#        deleteLCReader(reader)
-#    end
-#end
-
-
-
-# map from names stored in collection to actual types
-#LCIOTypemap = Dict(
-#    "CalorimeterHit" => CalorimeterHit,
-#    "Cluster" => Cluster,
-#       "LCGenericObject" => LCGenericObject,
-#    "LCRelation" => LCRelation,
-#       "MCParticle" => MCParticle,
-#    "RawCalorimeterHit" => RawCalorimeterHit,
-#    "ReconstructedParticle" => ReconstructedParticle,
-#       "SimCalorimeterHit" => SimCalorimeterHit,
-#       "SimTrackerHit" => SimTrackerHit,
-#       "Track" => Track,
-#       "TrackerHit" => TrackerHit,
-#    "TrackerRawData" => TrackerRawData,
-#    "Vertex" => Vertex,
-#)
-
-# This version of the iteration runs length() multiple times during the iteration
-# if this becomes a speed problem, the length could be memoized, or iteration order could be inverted
-#start(it::TypedCollection) = convert(UInt64, 1)
-#done(it::TypedCollection, i) = i > length(it)
-#next{T}(it::TypedCollection{T}, i) = it[i], i+1
-#length(it::TypedCollection) = getNumberOfElements(it)
-# getindex uses Julia counting, getElementAt uses C counting
-#getindex(it::TypedCollection, i) = getElementAt(it, convert(UInt64, i-1))
-
-#CellIDDecoder{T}(t::TypedCollection{T}) = CellIDDecoder{T}(coll(t))
-
-#getTypeName{T}(coll::TypedCollection{T}) = "$T"
-
-# to get the typed collection, one needs to read the typename
-# then we can return the right type from the LCIOTypemap
-#function getCollection(event, collectionName)
-#       collection = getEventCollection(event, collectionName)
-#       collectionType = getTypeName(collection)
-#       return TypedCollection{LCIOTypemap[collectionType]}(collection)
-#end
-
 #type LCStdHepRdr
 #    r::_LCStdHepRdrCpp
 #    e::LCEventImpl
@@ -269,6 +87,143 @@ export CalHit, getP4, getPosition, CellIDDecoder,
 #    updateNextEvent(r.r, r.e)
 #    getCollection(r.e, "MCParticle")
 #end
+# open file with reader, returns iterator
+function open(f::Function, fn::AbstractString)
+        icxx"""$(reader)->open($(fn));"""
+        try
+            f(EventIterator( icxx"(EVENT::LCEvent*)NULL;" ))
+        finally
+            icxx"""$(reader)->close();"""
+        end
+        # returns an iterator, initialized with a nullptr
+        # the iterator knows about the global reader object
+end
+
+# We would like to have a typed collection, but what getCollection returns is unfortunately untyped
+# The type is established by reading its name from the collection and mapping it in the LCIOTypemap
+immutable LCCollection{T}
+        coll::cxxt"EVENT::LCCollection*"
+end
+
+const CalorimeterHit = cxxt"EVENT::CalorimeterHit*"
+const Cluster = cxxt"EVENT::Cluster*"
+const LCGenericObject = cxxt"EVENT::LCGenericObject*"
+const LCRelation = cxxt"EVENT::LCRelation*"
+const MCParticle = cxxt"EVENT::MCParticle*"
+const ReconstructedParticle = cxxt"EVENT::ReconstructedParticle*"
+const SimCalorimeterHit = cxxt"EVENT::SimCalorimeterHit*"
+const SimTrackerHit = cxxt"EVENT::SimTrackerHit*"
+const Track = cxxt"EVENT::Track*"
+const TrackerHit = cxxt"EVENT::TrackerHit*"
+const TrackerRawData = cxxt"EVENT::TrackerRawData*"
+const Vertex = cxxt"EVENT::Vertex*"
+
+# map from names stored in collection to actual types
+const LCIOTypemap = Dict(
+    "CalorimeterHit" => CalorimeterHit,
+    "Cluster" => Cluster,
+    "LCGenericObject" => LCGenericObject,
+    "LCRelation" => LCRelation,
+    "MCParticle" => MCParticle,
+    "ReconstructedParticle" => ReconstructedParticle,
+    "SimCalorimeterHit" => SimCalorimeterHit,
+    "SimTrackerHit" => SimTrackerHit,
+    "Track" => Track,
+    "TrackerHit" => TrackerHit,
+    "TrackerRawData" => TrackerRawData,
+    "Vertex" => Vertex,
+)
+
+CellIDDecoder{T}(t::LCCollection{T}) = icxx"UTIL::CellIDDecoder<$(T)>($(t.coll));"
+
+decode(iddecoder) = icxx"$(iddecoder)->decode();"
+
+start(it::LCCollection) = 0
+done(it::LCCollection, i) = i >= length(it)
+next{T}(it::LCCollection{T}, i) = icxx"static_cast<$(T)>($(it.coll)->getElementAt($(i)));", i+1
+length(it::LCCollection) = icxx"$(it.coll)->getNumberOfElements();"
+
+function getCollection(event, collectionName)
+    collection = icxx"""$(event)->getCollection($(pointer(collectionName)));"""
+    collectionType = icxx"$(collection)->getTypeName();"
+    return LCCollection{LCIOTypemap[String(collectionType)]}(collection)
+end
+
+getTypeName(collection::LCCollection) = String( icxx"$(collection.coll)->getTypeName();" )
+getCollectionNames(event) = icxx"$(event)->getCollectionNames();"
+
+getEnergy(particle) = icxx"$(particle)->getEnergy();"
+function getMomentum(particle)
+        p3 = icxx"$(particle)->getMomentum();"
+        SVector{3, Float64}(unsafe_load(p3, 1), unsafe_load(p3, 2), unsafe_load(p3, 3))
+end
+function getPosition(hit)
+        pos = icxx"$(hit)->getPosition();"
+        SVector{3, Float64}(unsafe_load(pos, 1), unsafe_load(pos, 2), unsafe_load(pos, 3))
+end
+
+function getP4(particle)
+        p3 = icxx"$(particle)->getMomentum();"
+        e = icxx"$(particle)->getEnergy();"
+        SVector{4, Float64}(unsafe_load(p3, 1), unsafe_load(p3, 2), unsafe_load(p3, 3), e)
+end
+
+getType(particle) = icxx"$(particle)->getType();"
+
+getDetectorName(event) = String(icxx"$(event)->getDetectorName();")
+
+include("MCParticle.jl")
+include("CaloHit.jl")
+export CalHit, getP4, getPosition, CellIDDecoder,
+    getEventNumber, getRunNumber, getDetectorName, getCollection, getCollectionNames, # LCEvent
+    getType, getEnergy, getMomentum, getPDG, getParents, getTypeName,
+    decode
+#    getTypeName, # LCCollection
+#    getEnergy, getParents, getDaughters, getPDG, getGeneratorStatus, getSimulatorStatus, isCreatedInSimulation, isBackScatter, vertexIsNotEndpointOfParent, #isDecayedInCalorimeter, hasLeftDetector, isStopped, isOverlay, getVertex, getTime, getEndpoint, getMomentum, getMomentumAtEndpoint, getMass, getCharge, # MCParticle
+#    getCalorimeterHits, # Cluster
+#    getClusters, getType, isCompound, getMass, getCharge, getReferencePoint, getParticleIDs, getParticleIDUsed, getGoodnessOfPID, getParticles, getClusters, getTracks, #getStartVertex, getEndVertex # ReconstructedParticle
+
+
+#const MCPARTICLE = "MCParticle"
+#const WRITE_NEW = 0
+#const WRITE_APPEND = 1
+
+# iteration over std vectors
+#const StdVecs = Union{ClusterVec, CalorimeterHitVec, TrackVec, StringVec, MCParticleVec}
+
+# uses Julia counting, 1..n
+#start(it::StdVecs) = convert(UInt64, 1)
+#next(it::StdVecs, i) = (it[i], i+1)
+#done(it::StdVecs, i) = i > length(it)
+#length(it::StdVecs) = size(it)
+# 'at' uses C counting, 0..n-1
+#getindex(it::StdVecs, i) = at(it, i-1)
+
+#start(it::LCReader) = getNumberOfEvents(it)
+#next(it::LCReader, state) = readNextEvent(it), state-1
+#done(it::LCReader, state) = state < 1
+#length(it::LCReader) = getNumberOfEvents(it)
+
+
+# This version of the iteration runs length() multiple times during the iteration
+# if this becomes a speed problem, the length could be memoized, or iteration order could be inverted
+#start(it::TypedCollection) = convert(UInt64, 1)
+#done(it::TypedCollection, i) = i > length(it)
+#next{T}(it::TypedCollection{T}, i) = it[i], i+1
+#length(it::TypedCollection) = getNumberOfElements(it)
+# getindex uses Julia counting, getElementAt uses C counting
+#getindex(it::TypedCollection, i) = getElementAt(it, convert(UInt64, i-1))
+
+#getTypeName{T}(coll::TypedCollection{T}) = "$T"
+
+# to get the typed collection, one needs to read the typename
+# then we can return the right type from the LCIOTypemap
+#function getCollection(event, collectionName)
+#       collection = getEventCollection(event, collectionName)
+#       collectionType = getTypeName(collection)
+#       return TypedCollection{LCIOTypemap[collectionType]}(collection)
+#end
+
 #function getPosition(hit)
 #    p3 = Array{Float64,1}(3)
 #    valid = getPosition3(hit, p3)
@@ -321,13 +276,6 @@ export CalHit, getP4, getPosition, CellIDDecoder,
 # this ensures that the types are appropriately cast
 #function getRelatedFromObjects(nav::LCRelationNavigator, obj)
 #    [CastOperator{nav.fromType}.cast(x) for x in getRelatedFromObjects(nav.relnav)]
-#end
-
-# should work for all particle types
-#function getP4(x)
-#    p3 = getMomentum(x)
-#    E = getEnergy(x)
-#    return (E, p3)
 #end
 
 #getP3(x) = getPosition(x)

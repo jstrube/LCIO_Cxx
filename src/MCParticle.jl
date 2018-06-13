@@ -2,6 +2,8 @@ getGeneratorStatus(mcp) = icxx"$(mcp)->getGeneratorStatus();"
 getSimulatorStatus(mcp) = icxx"$(mcp)->getSimulatorStatus();"
 getPDG(mcp) = icxx"$(mcp)->getPDG();"
 
+getParents(mcp) = icxx"$(mcp)->getParents();"
+
 function printMCParticle(mcp)
     id = getPDG(mcp)
     genStatus = getMCPGenStatus(mcp)
