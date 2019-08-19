@@ -1,3 +1,4 @@
+import Printf: @printf
 getGeneratorStatus(mcp) = icxx"$(mcp)->getGeneratorStatus();"
 getSimulatorStatus(mcp) = icxx"$(mcp)->getSimulatorStatus();"
 getPDG(mcp) = icxx"$(mcp)->getPDG();"

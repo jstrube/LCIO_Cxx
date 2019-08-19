@@ -1,5 +1,5 @@
 using LCIO_Cxx
-using Base.Test
+using Test
 
 # test iteration
 LCIO_Cxx.open("test.slcio") do reader
@@ -7,6 +7,7 @@ for event in reader
     mcparts = getCollection(event, "MCParticle")
     for p in mcparts
         e = getEnergy(p)
+        println(e)
         @test e > 0
         momentum = getMomentum(p)
         if getPDG(p) != 22
@@ -34,6 +35,9 @@ LCIO_Cxx.open("test.slcio") do reader
 iEvent = 0
 for event in reader
     iEvent += 1
+    for name in getCollectionNames(event)
+        println(name)
+    end
     @test length(getCollectionNames(event)) == 23
     @test getDetectorName(event) == "sidloi3_scint1x1"
     HcalBarrelHits = getCollection(event, "HcalBarrelHits")

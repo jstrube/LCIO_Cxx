@@ -2,13 +2,13 @@ __precompile__(false)
 module LCIO_Cxx
 using Cxx
 using StaticArrays
+using Libdl
 
-import Base: getindex, start, done, next, length, convert, +
+import Base: getindex, iterate, length, convert, +
 
-const lcio_path="/afs/desy.de/user/j/jstrube/.julia/v0.6/LCIO/deps/usr/"
+const lcio_path="/home/jstrube/.julia/dev/LCIO/deps/usr/"
 addHeaderDir(lcio_path*"include", kind=C_System)
 Libdl.dlopen(lcio_path*"lib/liblcio.so", Libdl.RTLD_GLOBAL)
-cxxinclude("IO/LCReader.h")
 cxx"""
 #include "lcio.h"
 #include "IO/LCReader.h"
@@ -26,41 +26,81 @@ cxx"""
 #include "EVENT/Vertex.h"
 #include "EVENT/LCRelation.h"
 #include "EVENT/LCGenericObject.h"
+#include "EVENT/Cluster.h"
+#include "EVENT/CalorimeterHit.h"
 #include <vector>
 #include <iostream>
 #include <string>
 """
 
 function __init__()
-        global reader = icxx"IOIMPL::LCFactory::getInstance()->createLCReader();"
-        atexit() do
-                icxx"delete $(reader);"
-        end
 end
 
-const VectorStringP = cxxt"const std::vector<std::string>*"
+const ClusterVec = cxxt"EVENT::ClusterVec"
+const CalorimeterHitVec = cxxt"EVENT::CalorimeterHitVec"
+const TrackVec = cxxt"EVENT::TrackVec"
+const StringVec = cxxt"EVENT::StringVec"
+const MCParticleVec = cxxt"EVENT::MCParticleVec"
 
-start(it::VectorStringP) = 0
-next(it::VectorStringP,i) = (it[i], i+1)
-done(it::VectorStringP,i) = i >= length(it)
-getindex(it::VectorStringP,i) = String( icxx"$(it)->at($i).c_str();" )
-length(it::VectorStringP) = icxx"$(it)->size();"
+# iteration over std vectors
+const StdVecs = Union{ClusterVec, CalorimeterHitVec, TrackVec, StringVec, MCParticleVec}
 
+# uses Julia counting, 1..n
+iterate(it::StdVecs) = length(it) > 0 ? (it[1], 2) : nothing
+iterate(it::StdVecs, i) = i <= length(it) ? (it[i], i+1) : nothing
+length(it::StdVecs) = icxx"$(it)->size;"
+# 'at' uses C counting, 0..n-1
+# FIXME is the cast necessary?
+getindex(it::StdVecs, i) = at(it, convert(UInt64, i-1))
+eltype(::Type{ClusterVec}) = Cluster
+eltype(::Type{CalorimeterHitVec}) = CalorimeterHit
+eltype(::Type{TrackVec}) = Track
+eltype(::Type{StringVec}) = String
+eltype(::Type{MCParticleVec}) = MCParticle
+
+const LCReader = cxxt"IO::LCReader*"
+function iterate(it::LCReader)
+    event = icxx"$(it)->readNextEvent();"
+    event == C_NULL && return nothing
+    return (event, nothing)
+end
+iterate(it::LCReader, state) = iterate(it)
+length(it::LCReader) = icxx"$(it)->getNumberOfEvents();"
+eltype(::Type{LCReader}) = LCEvent
+    
+function open(f::Function, fn::AbstractString)
+    reader = icxx"IOIMPL::LCFactory::getInstance()->createLCReader();"
+    reader == C_NULL && return nothing
+    try
+        icxx"""$(reader)->open($(fn));"""
+        f(reader)
+    finally
+        icxx"""$(reader)->close();"""
+        icxx"""delete $(reader);"""
+    end
+end
+    
+    
 # The iterators use the events as state
 # the lcio reader returns NULL at the end of the file
 # Because the LCIO getNext function could re-use the memory for the next event,
 # the next function should not hold the current and next event at the same time.
 # Returning current and reading nextEvent as the new state causes memory corruption
-type EventIterator
-        current::cxxt"EVENT::LCEvent*"
+const LCEvent = cxxt"EVENT::LCEvent*"
+# uses Julia counting, 1..n
+iterate(it::StdVecs) = length(it) > 0 ? (it[1], 2) : nothing
+iterate(it::StdVecs, i) = i <= length(it) ? (it[i], i+1) : nothing
+length(it::StdVecs) = size(it)
+# 'at' uses C counting, 0..n-1
+# FIXME is the cast necessary?
+getindex(it::StdVecs, i) = at(it, convert(UInt64, i-1))
+
+function iterate(it::LCEvent)
+    event = icxx"$(reader)->readNextEvent();"
+    event != C_NULL ? (event, nothing) : nothing
 end
-start(it::EventIterator) = C_NULL
-next(it::EventIterator, state) = (it.current, C_NULL)
-function done(it::EventIterator,state)
-        it.current = icxx"$(reader)->readNextEvent();"
-        it.current == C_NULL
-end
-length(it::EventIterator) = icxx"$(reader)->getNumberOfEvents();"
+iterate(it::LCEvent, state) = iterate(it)
+length(it::LCEvent) = icxx"$(reader)->getNumberOfEvents();"
 
 #type LCStdHepRdr
 #    r::_LCStdHepRdrCpp
@@ -88,20 +128,10 @@ length(it::EventIterator) = icxx"$(reader)->getNumberOfEvents();"
 #    getCollection(r.e, "MCParticle")
 #end
 # open file with reader, returns iterator
-function open(f::Function, fn::AbstractString)
-        icxx"""$(reader)->open($(fn));"""
-        try
-            f(EventIterator( icxx"(EVENT::LCEvent*)NULL;" ))
-        finally
-            icxx"""$(reader)->close();"""
-        end
-        # returns an iterator, initialized with a nullptr
-        # the iterator knows about the global reader object
-end
 
 # We would like to have a typed collection, but what getCollection returns is unfortunately untyped
 # The type is established by reading its name from the collection and mapping it in the LCIOTypemap
-immutable LCCollection{T}
+struct LCCollection{T}
         coll::cxxt"EVENT::LCCollection*"
 end
 
@@ -134,14 +164,17 @@ const LCIOTypemap = Dict(
     "Vertex" => Vertex,
 )
 
-CellIDDecoder{T}(t::LCCollection{T}) = icxx"UTIL::CellIDDecoder<$(T)>($(t.coll));"
+# CellIDDecoder{T}(t::LCCollection{T}) = icxx"UTIL::CellIDDecoder<$(T)>($(t.coll));"
+
 
 decode(iddecoder) = icxx"$(iddecoder)->decode();"
 
-start(it::LCCollection) = 0
-done(it::LCCollection, i) = i >= length(it)
-next{T}(it::LCCollection{T}, i) = icxx"static_cast<$(T)>($(it.coll)->getElementAt($(i)));", i+1
+
+
+iterate(it::LCCollection{T}) where {T} = length(it) > 0 ? (it[1], 2) : nothing
+iterate(it::LCCollection{T}, i) where {T} = i <= length(it) ? (it[i], i+1) : nothing
 length(it::LCCollection) = icxx"$(it.coll)->getNumberOfElements();"
+getindex(it::LCCollection{T}, i) where {T} = icxx"static_cast<$(T)>($(it.coll)->getElementAt($(i)-1));"
 
 function getCollection(event, collectionName)
     collection = icxx"""$(event)->getCollection($(pointer(collectionName)));"""
@@ -174,7 +207,7 @@ getDetectorName(event) = String(icxx"$(event)->getDetectorName();")
 
 include("MCParticle.jl")
 include("CaloHit.jl")
-export CalHit, getP4, getPosition, CellIDDecoder,
+export CalHit, getP4, getPosition, 
     getEventNumber, getRunNumber, getDetectorName, getCollection, getCollectionNames, # LCEvent
     getType, getEnergy, getMomentum, getPDG, getParents, getTypeName,
     decode

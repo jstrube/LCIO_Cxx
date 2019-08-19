@@ -1,0 +1,12 @@
+name = "LCIO_Cxx"
+uuid = "28e319d2-9cef-51c0-b5f1-fdb25c8d2e86"
+
+[deps]
+Cxx = "a0b5b9ef-44b7-5148-a2d1-f6db19f3c3d2"
+Libdl = "8f399da3-3557-5675-b5ff-fb832c97cbdb"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[compat]
+julia = "≥ 1.2.0"
