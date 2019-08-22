@@ -35,17 +35,22 @@ LCIO_Cxx.open("test.slcio") do reader
 iEvent = 0
 for event in reader
     iEvent += 1
+    println(getCollectionNames(event))
+    println(length(getCollectionNames(event)))
+    @test length(getCollectionNames(event)) == 23
+    @test getDetectorName(event) == "sidloi3_scint1x1"
+    println("printing names")
     for name in getCollectionNames(event)
         println(name)
     end
-    @test length(getCollectionNames(event)) == 23
-    @test getDetectorName(event) == "sidloi3_scint1x1"
     HcalBarrelHits = getCollection(event, "HcalBarrelHits")
     @test getTypeName(HcalBarrelHits) == "SimCalorimeterHit"
     decode = CellIDDecoder(HcalBarrelHits)
+    println(decode)
     l = length(HcalBarrelHits)
     iHit = 0
     for h in HcalBarrelHits
+        println(decode(h))
         @test 0 <= decode(h)["layer"] <= 39
         iHit += 1
     end

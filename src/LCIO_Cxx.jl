@@ -36,27 +36,25 @@ cxx"""
 function __init__()
 end
 
-const ClusterVec = cxxt"EVENT::ClusterVec"
-const CalorimeterHitVec = cxxt"EVENT::CalorimeterHitVec"
-const TrackVec = cxxt"EVENT::TrackVec"
-const StringVec = cxxt"EVENT::StringVec"
-const MCParticleVec = cxxt"EVENT::MCParticleVec"
+const ClusterVec = cxxt"const std::vector<EVENT::Cluster*>*"
+const CalorimeterHitVec = cxxt"const std::vector<EVENT::CalorimeterHit*>*"
+const TrackVec = cxxt"const std::vector<EVENT::Track*>*"
+const StringVec = cxxt"const std::vector<std::string>*"
+const MCParticleVec = cxxt"const std::vector<EVENT::MCParticle*>*"
 
 # iteration over std vectors
 const StdVecs = Union{ClusterVec, CalorimeterHitVec, TrackVec, StringVec, MCParticleVec}
 
 # uses Julia counting, 1..n
-iterate(it::StdVecs) = length(it) > 0 ? (it[1], 2) : nothing
-iterate(it::StdVecs, i) = i <= length(it) ? (it[i], i+1) : nothing
-length(it::StdVecs) = icxx"$(it)->size;"
+iterate(it::StdVecs, i=1) = i <= length(it) ? (it[i], i+1) : nothing
+length(it::StdVecs) = icxx"$(it)->size();"
 # 'at' uses C counting, 0..n-1
-# FIXME is the cast necessary?
-getindex(it::StdVecs, i) = at(it, convert(UInt64, i-1))
-eltype(::Type{ClusterVec}) = Cluster
-eltype(::Type{CalorimeterHitVec}) = CalorimeterHit
-eltype(::Type{TrackVec}) = Track
-eltype(::Type{StringVec}) = String
-eltype(::Type{MCParticleVec}) = MCParticle
+getindex(it::StdVecs, i) = icxx"$(it)->at($(i)-1);"
+eltype(::Type{ClusterVec}) = cxxt"EVENT::Cluster*"
+eltype(::Type{CalorimeterHitVec}) = cxxt"EVENT::CalorimeterHit*"
+eltype(::Type{TrackVec}) = cxxt"EVENT::Track*"
+eltype(::Type{StringVec}) = cxxt"std::string"
+eltype(::Type{MCParticleVec}) = cxxt"EVENT::MCParticle*"
 
 const LCReader = cxxt"IO::LCReader*"
 function iterate(it::LCReader)
@@ -87,13 +85,6 @@ end
 # the next function should not hold the current and next event at the same time.
 # Returning current and reading nextEvent as the new state causes memory corruption
 const LCEvent = cxxt"EVENT::LCEvent*"
-# uses Julia counting, 1..n
-iterate(it::StdVecs) = length(it) > 0 ? (it[1], 2) : nothing
-iterate(it::StdVecs, i) = i <= length(it) ? (it[i], i+1) : nothing
-length(it::StdVecs) = size(it)
-# 'at' uses C counting, 0..n-1
-# FIXME is the cast necessary?
-getindex(it::StdVecs, i) = at(it, convert(UInt64, i-1))
 
 function iterate(it::LCEvent)
     event = icxx"$(reader)->readNextEvent();"
@@ -164,12 +155,10 @@ const LCIOTypemap = Dict(
     "Vertex" => Vertex,
 )
 
-# CellIDDecoder{T}(t::LCCollection{T}) = icxx"UTIL::CellIDDecoder<$(T)>($(t.coll));"
+const CellIDDecoder{T} = cxxt"UTIL::CellIDDecoder<$(T)>"
+CellIDDecoder(t::LCCollection{T}) where {T} = icxx"UTIL::CellIDDecoder<$(T)>($(t.coll));"
 
-
-decode(iddecoder) = icxx"$(iddecoder)->decode();"
-
-
+# decode(iddecoder) = icxx"$(iddecoder)->decode();"
 
 iterate(it::LCCollection{T}) where {T} = length(it) > 0 ? (it[1], 2) : nothing
 iterate(it::LCCollection{T}, i) where {T} = i <= length(it) ? (it[i], i+1) : nothing
@@ -207,7 +196,7 @@ getDetectorName(event) = String(icxx"$(event)->getDetectorName();")
 
 include("MCParticle.jl")
 include("CaloHit.jl")
-export CalHit, getP4, getPosition, 
+export CalHit, getP4, getPosition, CellIDDecoder,
     getEventNumber, getRunNumber, getDetectorName, getCollection, getCollectionNames, # LCEvent
     getType, getEnergy, getMomentum, getPDG, getParents, getTypeName,
     decode
